@@ -10,13 +10,33 @@ from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from datetime import datetime
 
 
 import yfinance as yf
 
-ticker = 'TSLA'
+ticker = input("Enter ticker of the stock")
+ticker = ticker.upper()
+start = str(input(f"Enter the date in format (YYYY-MM-DD) from which date sata will be used to train your model (recommended 3 to 6 years) : "))
+end = str(input(f"Enter end date same format : "))
+try:
+    start = datetime.strptime(start, "%Y-%m-%d")
+    end = datetime.strptime(end, "%Y-%m-%d")
+except:
+    print("invalid date format")
+    print("please enter the date in the format of YYYY-MM-DD")
+    exit()
 
-data = yf.download(ticker , start = '2016-04-23' , end = '2026-05-03')
+data = yf.download(ticker , start = start , end = end)
+if data.empty:
+    print("Invalid ticker or no data available.")
+    exit()
+
+if len(data) < 200:
+    print("Not enough historical data to train the model.")
+    print(f"data available for {len(data)} days please try again")
+    exit()
+
 # to remove the unneccesary index
 data.columns = data.columns.droplevel(1)
 
