@@ -6,7 +6,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import keras
 import numpy as np
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error,root_mean_squared_error
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -15,10 +16,12 @@ from datetime import datetime
 
 import yfinance as yf
 
-ticker = input("Enter ticker of the stock")
+ticker = input("Enter ticker of the stock : ")
 ticker = ticker.upper()
 start = str(input(f"Enter the date in format (YYYY-MM-DD) from which date sata will be used to train your model (recommended 3 to 6 years) : "))
-end = str(input(f"Enter end date same format : "))
+end = str(input(f"Enter end date smae format : "))
+if start >= end :
+    print("please enter the date correctly")
 try:
     start = datetime.strptime(start, "%Y-%m-%d")
     end = datetime.strptime(end, "%Y-%m-%d")
@@ -32,17 +35,30 @@ if data.empty:
     print("Invalid ticker or no data available.")
     exit()
 
-if len(data) < 200:
+if len(data) < 500:
     print("Not enough historical data to train the model.")
     print(f"data available for {len(data)} days please try again")
     exit()
 
-# to remove the unneccesary index
-data.columns = data.columns.droplevel(1)
+# too many index :/ :/ :/ :/ :/ :/ :/ :/
+if isinstance(data.columns,pd.MultiIndex):
+    data.columns = data.columns.droplevel(1)
 
-print(data.head())
-print(data.info())
-print(data.describe())
+data['sma_20'] = data['Close'].rolling(20).mean()
+# print(data[['Close','sma_20']].head(25))
+data =data.dropna()
+
+plt.figure(figsize= (12,9))
+plt.plot(data['Close'],label = "close" ,color = "red")
+plt.plot(data['sma_20'],label = "sma" ,color = "purple")
+plt.legend()
+plt.show()
+
+
+# print(data.head())
+# print(data.info())
+# print(data.describe())
+
 
 plt.figure(figsize =(12,6))
 plt.plot(data.index, data['Open'], label = "Open", color = "orange")
@@ -58,6 +74,7 @@ plt.title("volume over time")
 plt.savefig("images/volume_over_time.png", dpi=300, bbox_inches="tight")
 plt.show()
 
+
 # correlation between features
 num_data = data.select_dtypes(include= 'number')
 plt.figure(figsize=(10,8))
@@ -67,32 +84,39 @@ plt.savefig("images/heatmap.png", dpi=300, bbox_inches="tight")
 plt.show()
 print(num_data.corr())
 
-stock_close = data.filter(['Close'])
-dataset = stock_close.values
+features = data[['Close' , 'sma_20']]
+target = data[['Close']]
 data_L = int(np.ceil(len(data)*0.80))
 
-scale = StandardScaler()
-scaled_data = scale.fit_transform(dataset)
+train_features = features.iloc[:data_L]
+test_features = features.iloc[data_L:]
 
-train_data = scaled_data[:data_L]
+train_target = target.iloc[:data_L]
+test_target = target.iloc[data_L:]
 
-x = []
-y = []
+TF_scaler = MinMaxScaler()
+TT_scaler = MinMaxScaler() 
+train_features_scaled = TF_scaler.fit_transform(train_features)
+test_features_scaled = TF_scaler.transform(test_features)
+train_target_scaled = TT_scaler.fit_transform(train_target)
+test_target_scaled = TT_scaler.transform(test_target)
 
-for i in range(30,len(train_data)):
-    x.append(train_data[i-30:i,0])
-    y.append(train_data[i,0])
+x_train = []
+y_train = []
 
-x = np.array(x)
-y = np.array(y)
+for i in range(30,len(train_features_scaled)):
+    x_train.append(train_features_scaled[i-30:i,:])
+    y_train.append(train_target_scaled[i,0])
 
-x = np.reshape(x,(x.shape[0],x.shape[1],1)) 
+x_train = np.array(x_train)
+y_train = np.array(y_train)
+
 
 model = keras.models.Sequential()
 
 
 # layers
-model.add(keras.layers.LSTM(64, return_sequences= True , input_shape = (x.shape[1],1)))
+model.add(keras.layers.LSTM(64, return_sequences= True , input_shape = (x_train.shape[1],x_train.shape[2])))
 model.add(keras.layers.LSTM(64, return_sequences= False))
 model.add(keras.layers.Dense(128, activation= "relu"))
 model.add(keras.layers.Dropout(0.5))
@@ -101,39 +125,48 @@ model.add(keras.layers.Dense(1))
 model.summary()
 model.compile(optimizer= "adam",loss= "mae",metrics= [keras.metrics.RootMeanSquaredError()])
 
-training = model.fit(x,y,epochs=20,batch_size=32)
+training = model.fit(x_train,y_train,epochs=20,batch_size=32)
 
-test_data = scaled_data[data_L - 30 :]
+test_input = np.concatenate((train_features_scaled[-30:],test_features_scaled))
 x_test = []
-y_test = dataset[data_L : ]
+for i in range(30,len(test_input)):
+    x_test.append(test_input[i-30:i,:])
 
-
-for i in range(30,len(test_data)):
-    x_test.append(test_data[i-30:i,0])
-
+# 30 previous days of close and sma20 data
 x_test = np.array(x_test)
-x_test = np.reshape(x_test,(x_test.shape[0],x_test.shape[1],1))
+# current prediction close data
+y_test = test_target_scaled
+
+# x_test = np.reshape(x_test,(x_test.shape[0],x_test.shape[1],1))
 
 future_price = model.predict(x_test)
-future_price = scale.inverse_transform(future_price)
+future_price = TT_scaler.inverse_transform(future_price)
+actual_price = TT_scaler.inverse_transform(y_test.reshape(-1,1))
 
-train = data[:data_L]
-test = data[data_L:]
+# for aesthetic
+print("\n========== Model Evaluation ==========")
+mae = mean_absolute_error(future_price,actual_price)
+print(f"mae is : {mae:.2f}")
 
-copy = test.copy()
-
-# value used in plt.plot 3rd one
-test["FuturePrice"] = future_price
-
+rmse = root_mean_squared_error(future_price,actual_price)
+print(f"rmse is : {rmse:.2f}")
+print("======================================")
 
 # graph
 plt.figure(figsize=(12,8))
-plt.plot(train.index,train['Close'],label= "trained_data", color= "red")
-plt.plot(test.index,test['Close'],label= "tested data", color = "green")
-plt.plot(test.index,test["FuturePrice"],label= "predicted price", color = "blue")
+plt.plot(train_features.index,train_features["Close"],label= "trained price", color= "red")
+plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
+plt.plot(test_features.index,test_target["Close"],label= "predicted price", color = "blue")
 plt.title("price pridiction usind lstm")
 plt.xlabel("date")
 plt.ylabel("price")
 plt.legend()
 plt.savefig("images/pridicted_data.png", dpi=300, bbox_inches="tight")
+plt.show()
+
+plt.figure(figsize=(12,8))
+plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
+plt.plot(test_features.index,future_price,label= "predicted price", color = "blue")
+plt.title("comparison")
+plt.legend()
 plt.show()
