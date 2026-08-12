@@ -55,10 +55,6 @@ plt.legend()
 plt.show()
 
 
-# print(data.head())
-# print(data.info())
-# print(data.describe())
-
 
 plt.figure(figsize =(12,6))
 plt.plot(data.index, data['Open'], label = "Open", color = "orange")
@@ -84,7 +80,7 @@ plt.savefig("images/heatmap.png", dpi=300, bbox_inches="tight")
 plt.show()
 print(num_data.corr())
 
-features = data[['Close' , 'sma_20']]
+features = data[['Open', 'High', 'Low', 'Close', 'Volume', 'sma_20']]
 target = data[['Close']]
 train_data = int(np.ceil(len(data)*0.70))
 val_data = int(np.ceil(len(data)*0.80))
@@ -100,7 +96,7 @@ test_target = target.iloc[val_data:]
 TF_scaler = MinMaxScaler()
 TT_scaler = MinMaxScaler() 
 train_features_scaled = TF_scaler.fit_transform(train_features)
-val_daatures_scaled = TF_scaler.transform(val_features)
+val_features_scaled = TF_scaler.transform(val_features)
 test_features_scaled = TF_scaler.transform(test_features)
 
 train_target_scaled = TT_scaler.fit_transform(train_target)
@@ -118,7 +114,7 @@ y_train = np.array(y_train)
 
 
 # sliding window for val
-val_data_input = np.concatenate((train_features_scaled[-30:],val_daatures_scaled))
+val_data_input = np.concatenate((train_features_scaled[-30:],val_features_scaled))
 val_data_x = []
 for i in range(30,len(val_data_input)):
     val_data_x.append(val_data_input[i-30:i,:])
@@ -152,7 +148,7 @@ plt.legend()
 plt.show()
 
 # sliding window for current data it will predict whats the prediction from current data values of sma20,close
-test_input = np.concatenate((train_features_scaled[-30:],test_features_scaled))
+test_input = np.concatenate((val_features_scaled[-30:],test_features_scaled))
 x_test = []
 for i in range(30,len(test_input)):
     x_test.append(test_input[i-30:i,:])
@@ -199,11 +195,12 @@ plt.xlabel("date")
 plt.ylabel("price")
 plt.legend()
 plt.savefig("images/pridicted_data.png", dpi=300, bbox_inches="tight")
-plt.show()
+# plt.show()
 
 plt.figure(figsize=(12,8))
 plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
 plt.plot(test_features.index,future_price,label= "predicted price", color = "blue")
+plt.plot(test_features.index,data_for_bl,label= "naive baseline", color = "red")
 plt.title("comparison")
 plt.legend()
 plt.show()
