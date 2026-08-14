@@ -6,16 +6,16 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import keras
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler,StandardScaler
 from sklearn.metrics import mean_absolute_error,root_mean_squared_error
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
-
-
+from xgboost import XGBRegressor
 import yfinance as yf
 
+# download data
 ticker = input("Enter ticker of the stock : ")
 ticker = ticker.upper()
 start = str(input(f"Enter the date in format (YYYY-MM-DD) from which date sata will be used to train your model (recommended 3 to 6 years) : "))
@@ -39,60 +39,46 @@ if len(data) < 500:
     print("Not enough historical data to train the model.")
     print(f"data available for {len(data)} days please try again")
     exit()
+# data downloaded
+
+
 
 # too many index :/ :/ :/ :/ :/ :/ :/ :/
 if isinstance(data.columns,pd.MultiIndex):
     data.columns = data.columns.droplevel(1)
 
-data['sma_20'] = data['Close'].rolling(20).mean()
+
+
+# data --
+# data['sma_20'] = data['Close'].rolling(20).mean()
 # print(data[['Close','sma_20']].head(25))
+data['Open-Close-ratio-lag-1'] = np.log(data['Open']/data['Close'].shift(1))
+data['High-Low-ratio'] = np.log(data['High']/data['Low'])
+data['Volume-lag-1'] = np.log(data['Volume'].shift(1))
 data['price_change'] = data['Close'].pct_change()
 data['log_return'] = np.log(data['Close']/data['Close'].shift(1))
 data['volatility_change'] = data['price_change'].rolling(20).std()
+data['price_change_lag_1'] = data['price_change'].shift(1)
+data['Volume_lag_1'] = data['Volume'].shift(1)
+data['volatility_lag_1'] = data['volatility_change'].shift(1)
 
+# loss and gain during training and validation
 diff = data['Close'].diff()
 loss = -diff.clip(upper=0)
 gain = diff.clip(lower=0)
 avg_loss = loss.rolling(20).mean()
 avg_gain = gain.rolling(20).mean()
-relative_strength = avg_gain / avg_loss
-# relative strenth index
-data['rsi'] = 100-(100/(1+relative_strength)) 
+# relative_strength = avg_gain / avg_loss
+# # relative strenth index
+# data['rsi'] = 100-(100/(1+relative_strength)) 
+for lag in range(1,11):
+    data[f'return_lag_{lag}'] = data['log_return'].shift(lag)
+
 data =data.dropna()
 
-plt.figure(figsize= (12,9))
-plt.plot(data['Close'],label = "close" ,color = "red")
-plt.plot(data['sma_20'],label = "sma" ,color = "purple")
-plt.legend()
-plt.show()
 
-
-
-plt.figure(figsize =(12,6))
-plt.plot(data.index, data['Open'], label = "Open", color = "orange")
-plt.plot(data.index, data['Close'], label = "Close", color = "green")
-plt.title("opening and closing price over time")
-plt.legend()
-plt.savefig("images/actual_data.png", dpi=600, bbox_inches="tight")
-plt.show()
-
-plt.figure(figsize =(12,6))
-plt.plot(data.index, data['Volume'], label = "Date-Volume", color = "red")
-plt.title("volume over time")
-plt.savefig("images/volume_over_time.png", dpi=600, bbox_inches="tight")
-plt.show()
-
-
-# correlation between features
-num_data = data.select_dtypes(include= 'number')
-plt.figure(figsize=(10,8))
-sns.heatmap(num_data.corr() ,annot= True,fmt = ".2f", cmap = "coolwarm")
-plt.title("correlation between features")
-plt.savefig("images/heatmap.png", dpi=600, bbox_inches="tight")
-plt.show()
-print(num_data.corr())
-
-features = data[['Open', 'High', 'Low', 'Close', 'Volume','volatility_change','price_change']]
+# ---------------------LSTM--------------------------
+features = data[['Open-Close-ratio-lag-1','High-Low-ratio','Volume-lag-1','volatility_lag_1','price_change_lag_1']]
 target = data[['log_return']]
 train_data = int(np.ceil(len(data)*0.70))
 val_data = int(np.ceil(len(data)*0.80))
@@ -105,8 +91,8 @@ train_target = target.iloc[:train_data]
 val_target = target.iloc[train_data:val_data]
 test_target = target.iloc[val_data:]
 
-TF_scaler = MinMaxScaler()
-TT_scaler = MinMaxScaler() 
+TF_scaler = StandardScaler()
+TT_scaler = StandardScaler() 
 train_features_scaled = TF_scaler.fit_transform(train_features)
 val_features_scaled = TF_scaler.transform(val_features)
 test_features_scaled = TF_scaler.transform(test_features)
@@ -114,6 +100,8 @@ test_features_scaled = TF_scaler.transform(test_features)
 train_target_scaled = TT_scaler.fit_transform(train_target)
 val_target_scaled = TT_scaler.transform(val_target)
 test_target_scaled = TT_scaler.transform(test_target)
+
+
 
 # sliding window for training data x,y
 x_train = []
@@ -125,6 +113,7 @@ x_train = np.array(x_train)
 y_train = np.array(y_train)
 
 
+
 # sliding window for val
 val_data_input = np.concatenate((train_features_scaled[-60:],val_features_scaled))
 val_data_x = []
@@ -134,14 +123,14 @@ val_data_x = np.array(val_data_x)
 val_data_y = val_target_scaled
 
 
-model = keras.models.Sequential()
 
+model = keras.models.Sequential()
 
 # layers
 model.add(keras.layers.LSTM(64, return_sequences= True , input_shape = (x_train.shape[1],x_train.shape[2])))
 model.add(keras.layers.LSTM(64, return_sequences= False))
 model.add(keras.layers.Dense(128, activation= "relu"))
-model.add(keras.layers.Dropout(0.5))
+model.add(keras.layers.Dropout(0.2))
 model.add(keras.layers.Dense(1))
 
 model.summary()
@@ -151,14 +140,7 @@ early_stop = keras.callbacks.EarlyStopping(monitor= "val_loss" ,patience= 3 ,res
 
 training = model.fit(x_train,y_train,epochs=20,batch_size=32,validation_data=(val_data_x,val_data_y),callbacks=[early_stop])
 
-plt.plot(training.history["loss"], label="Training Loss")
-plt.plot(training.history["val_loss"], label="Validation Loss")
-plt.xlabel("Epoch")
-plt.ylabel("MAE")
-plt.title("Training vs Validation Loss")
-plt.legend()
-plt.savefig("images/loss_val-loss_data.png", dpi=600, bbox_inches="tight")
-plt.show()
+
 
 # sliding window for current data it will predict whats the prediction from current data values
 test_input = np.concatenate((val_features_scaled[-60:],test_features_scaled))
@@ -171,14 +153,66 @@ y_test = test_target_scaled
 
 future_return = model.predict(x_test)
 future_return = TT_scaler.inverse_transform(future_return).flatten()
-actual_price = test_features['Close'].values
+actual_price = data['Close'].iloc[val_data:].values
 
-previous_1_price = np.concatenate((val_features['Close'].values[-1:],test_features['Close'].values[:-1]))
+previous_1_price = data['Close'].iloc[val_data-1:val_data+len(test_features_scaled)-1].values
+print("previous_1_price:", previous_1_price.shape)
+print("future_return:", future_return.shape)
 predicted_price = previous_1_price * np.exp(future_return)
 
 #   ----------------- naive baseline --------------------- 
-data_for_bl = np.concatenate((val_features["Close"].values[-1:],test_features["Close"].values[:-1]))
-test_values = test_features["Close"].values
+data_for_bl = np.concatenate((data["Close"].iloc[val_data-1:val_data].values[-1:],data["Close"].iloc[val_data:-1].values))
+test_values = data["Close"].iloc[val_data:].values
+
+#    ------------------- xgboost --------------------------
+xgboost_features = data[
+    [
+        'Open', 
+        # 'High', 
+        # 'Low',
+        'price_change_lag_1',
+        'Volume_lag_1',
+        'volatility_lag_1',
+        "return_lag_1",
+        "return_lag_2",
+        "return_lag_3",
+        "return_lag_4",
+        "return_lag_5",
+        "return_lag_6",
+        "return_lag_7",
+        "return_lag_8",
+        "return_lag_9",
+        "return_lag_10"
+    ]
+]
+
+xgboost_target = data['log_return']
+
+xgb_x_train = xgboost_features.iloc[:train_data]
+xgb_x_val = xgboost_features.iloc[train_data:val_data]
+xgb_x_test = xgboost_features.iloc[val_data:]
+
+
+xgb_y_train = xgboost_target.iloc[:train_data]
+xgb_y_val = xgboost_target.iloc[train_data:val_data]
+xgb_y_test = xgboost_target.iloc[val_data:]
+
+xgb_model = XGBRegressor(
+    n_estimators = 200,
+    learning_rate = 0.05,
+    max_depth = 3,
+    random_state = None
+)
+
+xgb_model.fit(
+    xgb_x_train,
+    xgb_y_train,
+    eval_set = [(xgb_x_val,xgb_y_val)],
+    verbose = False
+)
+
+xgb_prediction = xgb_model.predict(xgb_x_test)
+xgb_predicted_price = previous_1_price*np.exp(xgb_prediction)
 
 
 # for aesthetic
@@ -194,25 +228,69 @@ print(f"mae for Naive Baseline is : {mae:.2f}")
 
 rmse = root_mean_squared_error(data_for_bl,test_values)
 print(f"rmse for Naive Baseline is : {rmse:.2f}")
+
+mae = mean_absolute_error(xgb_predicted_price,actual_price)
+print(f'mae for XGBoost is : {mae: .6f}')
+
+rmse = root_mean_squared_error(xgb_predicted_price,actual_price)
+print(f'rmse for XGBoost is : {rmse: .6f}')
 print("======================================")
 
-# graph
-plt.figure(figsize=(12,8))
-plt.plot(train_features.index,train_features["Close"],label= "trained price", color= "red")
-plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
-plt.plot(val_features.index,val_features["Close"],label= "given val price", color = "purple")
-plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
-plt.title("price pridiction usind lstm")
-plt.xlabel("date")
-plt.ylabel("price")
-plt.legend()
-plt.savefig("images/pridicted_data.png", dpi=600, bbox_inches="tight")
+# # graph
+# plt.figure(figsize= (12,9))
+# plt.plot(data['Close'],label = "close" ,color = "red")
+# plt.plot(data['sma_20'],label = "sma" ,color = "purple")
+# plt.legend()
 # plt.show()
 
-plt.figure(figsize=(12,8))
-plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
-plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
-plt.plot(test_features.index,data_for_bl,label= "naive baseline", color = "red")
-plt.title("comparison")
+# plt.figure(figsize =(12,6))
+# plt.plot(data.index, data['Open'], label = "Open", color = "orange")
+# plt.plot(data.index, data['Close'], label = "Close", color = "green")
+# plt.title("opening and closing price over time")
+# plt.legend()
+# plt.savefig("images/actual_data.png", dpi=600, bbox_inches="tight")
+# plt.show()
+
+# plt.figure(figsize =(12,6))
+# plt.plot(data.index, data['Volume'], label = "Date-Volume", color = "red")
+# plt.title("volume over time")
+# plt.savefig("images/volume_over_time.png", dpi=600, bbox_inches="tight")
+# plt.show()
+
+# correlation between features
+# num_data = data.select_dtypes(include= 'number')
+# plt.figure(figsize=(10,8))
+# sns.heatmap(num_data.corr() ,annot= True,fmt = ".2f", cmap = "coolwarm")
+# plt.title("correlation between features")
+# plt.savefig("images/heatmap.png", dpi=600, bbox_inches="tight")
+# plt.show()
+# print(num_data.corr())
+
+plt.plot(training.history["loss"], label="Training Loss")
+plt.plot(training.history["val_loss"], label="Validation Loss")
+plt.xlabel("Epoch")
+plt.ylabel("MAE")
+plt.title("Training vs Validation Loss")
 plt.legend()
+plt.savefig("images/loss_val-loss_data.png", dpi=600, bbox_inches="tight")
 plt.show()
+
+# plt.figure(figsize=(12,8))
+# plt.plot(train_features.index,train_features["Close"],label= "trained price", color= "red")
+# plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
+# plt.plot(val_features.index,val_features["Close"],label= "given val price", color = "purple")
+# plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
+# plt.title("price pridiction usind lstm")
+# plt.xlabel("date")
+# plt.ylabel("price")
+# plt.legend()
+# plt.savefig("images/pridicted_data.png", dpi=600, bbox_inches="tight")
+# # plt.show()
+
+# plt.figure(figsize=(12,8))
+# plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
+# plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
+# plt.plot(test_features.index,data_for_bl,label= "naive baseline", color = "red")
+# plt.title("comparison")
+# plt.legend()
+# plt.show()
