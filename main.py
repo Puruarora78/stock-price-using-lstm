@@ -47,6 +47,7 @@ if isinstance(data.columns,pd.MultiIndex):
 data['sma_20'] = data['Close'].rolling(20).mean()
 # print(data[['Close','sma_20']].head(25))
 data['price_change'] = data['Close'].pct_change()
+data['log_return'] = np.log(data['Close']/data['Close'].shift(1))
 data['volatility_change'] = data['price_change'].rolling(20).std()
 
 diff = data['Close'].diff()
@@ -72,13 +73,13 @@ plt.plot(data.index, data['Open'], label = "Open", color = "orange")
 plt.plot(data.index, data['Close'], label = "Close", color = "green")
 plt.title("opening and closing price over time")
 plt.legend()
-plt.savefig("images/actual_data.png", dpi=300, bbox_inches="tight")
+plt.savefig("images/actual_data.png", dpi=600, bbox_inches="tight")
 plt.show()
 
 plt.figure(figsize =(12,6))
 plt.plot(data.index, data['Volume'], label = "Date-Volume", color = "red")
 plt.title("volume over time")
-plt.savefig("images/volume_over_time.png", dpi=300, bbox_inches="tight")
+plt.savefig("images/volume_over_time.png", dpi=600, bbox_inches="tight")
 plt.show()
 
 
@@ -87,12 +88,12 @@ num_data = data.select_dtypes(include= 'number')
 plt.figure(figsize=(10,8))
 sns.heatmap(num_data.corr() ,annot= True,fmt = ".2f", cmap = "coolwarm")
 plt.title("correlation between features")
-plt.savefig("images/heatmap.png", dpi=300, bbox_inches="tight")
+plt.savefig("images/heatmap.png", dpi=600, bbox_inches="tight")
 plt.show()
 print(num_data.corr())
 
-features = data[['Open', 'High', 'Low', 'Close', 'Volume', 'sma_20','volatility_change','price_change','rsi']]
-target = data[['Close']]
+features = data[['Open', 'High', 'Low', 'Close', 'Volume','volatility_change','price_change']]
+target = data[['log_return']]
 train_data = int(np.ceil(len(data)*0.70))
 val_data = int(np.ceil(len(data)*0.80))
 
@@ -103,14 +104,6 @@ test_features = features.iloc[val_data:]
 train_target = target.iloc[:train_data]
 val_target = target.iloc[train_data:val_data]
 test_target = target.iloc[val_data:]
-
-
-
-print("Test starts:", test_features.index[0])
-print("Test ends:", test_features.index[-1])
-print("Test samples:", len(test_features))
-
-
 
 TF_scaler = MinMaxScaler()
 TT_scaler = MinMaxScaler() 
@@ -125,18 +118,18 @@ test_target_scaled = TT_scaler.transform(test_target)
 # sliding window for training data x,y
 x_train = []
 y_train = []
-for i in range(30,len(train_features_scaled)):
-    x_train.append(train_features_scaled[i-30:i,:])
+for i in range(60,len(train_features_scaled)):
+    x_train.append(train_features_scaled[i-60:i,:])
     y_train.append(train_target_scaled[i,0])
 x_train = np.array(x_train)
 y_train = np.array(y_train)
 
 
 # sliding window for val
-val_data_input = np.concatenate((train_features_scaled[-30:],val_features_scaled))
+val_data_input = np.concatenate((train_features_scaled[-60:],val_features_scaled))
 val_data_x = []
-for i in range(30,len(val_data_input)):
-    val_data_x.append(val_data_input[i-30:i,:])
+for i in range(60,len(val_data_input)):
+    val_data_x.append(val_data_input[i-60:i,:])
 val_data_x = np.array(val_data_x)
 val_data_y = val_target_scaled
 
@@ -164,36 +157,36 @@ plt.xlabel("Epoch")
 plt.ylabel("MAE")
 plt.title("Training vs Validation Loss")
 plt.legend()
+plt.savefig("images/loss_val-loss_data.png", dpi=600, bbox_inches="tight")
 plt.show()
 
-# sliding window for current data it will predict whats the prediction from current data values of sma20,close
-test_input = np.concatenate((val_features_scaled[-30:],test_features_scaled))
+# sliding window for current data it will predict whats the prediction from current data values
+test_input = np.concatenate((val_features_scaled[-60:],test_features_scaled))
 x_test = []
-for i in range(30,len(test_input)):
-    x_test.append(test_input[i-30:i,:])
+for i in range(60,len(test_input)):
+    x_test.append(test_input[i-60:i,:])
 x_test = np.array(x_test)
 y_test = test_target_scaled
 
 
-# x_test = np.reshape(x_test,(x_test.shape[0],x_test.shape[1],1))
+future_return = model.predict(x_test)
+future_return = TT_scaler.inverse_transform(future_return).flatten()
+actual_price = test_features['Close'].values
 
-future_price = model.predict(x_test)
-future_price = TT_scaler.inverse_transform(future_price)
-actual_price = TT_scaler.inverse_transform(y_test.reshape(-1,1))
+previous_1_price = np.concatenate((val_features['Close'].values[-1:],test_features['Close'].values[:-1]))
+predicted_price = previous_1_price * np.exp(future_return)
 
 #   ----------------- naive baseline --------------------- 
-data_for_bl = np.concatenate((val_target["Close"].values[-1:],test_target["Close"].values[:-1]))
-test_values = test_target["Close"].values
-print(mean_absolute_error(data_for_bl,test_values))
-print(root_mean_squared_error(data_for_bl,test_values))
+data_for_bl = np.concatenate((val_features["Close"].values[-1:],test_features["Close"].values[:-1]))
+test_values = test_features["Close"].values
 
 
 # for aesthetic
 print("\n========== Model Evaluation ==========")
-mae = mean_absolute_error(future_price,actual_price)
+mae = mean_absolute_error(predicted_price,actual_price)
 print(f"mae for LSTM is : {mae:.2f}")
 
-rmse = root_mean_squared_error(future_price,actual_price)
+rmse = root_mean_squared_error(predicted_price,actual_price)
 print(f"rmse for LSTM is : {rmse:.2f}")
 
 mae = mean_absolute_error(data_for_bl,test_values)
@@ -203,23 +196,23 @@ rmse = root_mean_squared_error(data_for_bl,test_values)
 print(f"rmse for Naive Baseline is : {rmse:.2f}")
 print("======================================")
 
-# # graph
-# plt.figure(figsize=(12,8))
-# plt.plot(train_features.index,train_features["Close"],label= "trained price", color= "red")
-# plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
-# plt.plot(val_features.index,val_features["Close"],label= "given val price", color = "purple")
-# plt.plot(test_features.index,future_price,label= "predicted price", color = "blue")
-# plt.title("price pridiction usind lstm")
-# plt.xlabel("date")
-# plt.ylabel("price")
-# plt.legend()
-# plt.savefig("images/pridicted_data.png", dpi=300, bbox_inches="tight")
-# # plt.show()
-
-# plt.figure(figsize=(12,8))
-# plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
-# plt.plot(test_features.index,future_price,label= "predicted price", color = "blue")
-# plt.plot(test_features.index,data_for_bl,label= "naive baseline", color = "red")
-# plt.title("comparison")
-# plt.legend()
+# graph
+plt.figure(figsize=(12,8))
+plt.plot(train_features.index,train_features["Close"],label= "trained price", color= "red")
+plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
+plt.plot(val_features.index,val_features["Close"],label= "given val price", color = "purple")
+plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
+plt.title("price pridiction usind lstm")
+plt.xlabel("date")
+plt.ylabel("price")
+plt.legend()
+plt.savefig("images/pridicted_data.png", dpi=600, bbox_inches="tight")
 # plt.show()
+
+plt.figure(figsize=(12,8))
+plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
+plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
+plt.plot(test_features.index,data_for_bl,label= "naive baseline", color = "red")
+plt.title("comparison")
+plt.legend()
+plt.show()
