@@ -14,6 +14,9 @@ import seaborn as sns
 from datetime import datetime
 from xgboost import XGBRegressor
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.stats.diagnostic import acorr_ljungbox
+import matplotlib.dates as mdates
 
 import yfinance as yf
 
@@ -80,12 +83,13 @@ for lag in range(1,11):
 
 data =data.dropna()
 
-
 # ---------------------LSTM--------------------------
 features = data[['Open-Close-ratio-lag-1','High-Low-ratio','Volume-lag-1','volatility_lag_1','price_change_lag_1']]
 target = data[['log_return']]
 train_data = int(np.ceil(len(data)*0.70))
 val_data = int(np.ceil(len(data)*0.80))
+
+test_dates = data.index[val_data:]
 
 train_features = features.iloc[:train_data]
 val_features = features.iloc[train_data:val_data]
@@ -181,48 +185,76 @@ train_sarima = data['log_return'].iloc[:train_data]
 val_sarima = data['log_return'].iloc[train_data:val_data]
 test_sarima = data['log_return'].iloc[val_data:]
 
+final_train_data = np.concatenate([train_sarima,val_sarima])
+
 sarima_model = SARIMAX(
-    train_sarima,
-    order= (0,0,1),
-    seasonal_order= (1,0,0,5),
+    final_train_data,
+    order= (1,0,0),
+    seasonal_order= (1,0,1,5),
     enforce_invertibility=False,
     enforce_stationarity=False
 )
 
 sarima_result = sarima_model.fit(disp=False)
-print(sarima_result.summary())
-
-sarima_val_prediction = []
+# print(sarima_result.summary())
 sarima_current = sarima_result
-for i in val_sarima:
-    forecast = sarima_current.forecast(steps = 1)
-    sarima_val_prediction.append(forecast.iloc[0])
-    sarima_current = sarima_current.append([i],refit = False)
-sarima_val_prediction = np.array(sarima_val_prediction)
 
-sarima_val_actual_lag_1 = data['Close'].iloc[train_data-1:val_data-1]
-sarima_val_prediction_price = sarima_val_actual_lag_1*np.exp(sarima_val_prediction)
 
-val_data_close = data['Close'].iloc[train_data:val_data]
-mae = mean_absolute_error(sarima_val_prediction_price,val_data_close)
-print(f'mae for sarima validation is : {mae: .6f}')
+# residual check 
+# lb_1 = acorr_ljungbox(
+#     residual_1,
+#     lags = [5,10,15,20],
+#     return_df= True
+# )
+# lb_2 = acorr_ljungbox(
+#     resid_2,
+#     lags= [5,10,15,20],
+#     return_df= True
+# )
+# print(f'lb_1 is : {lb_1}')
+# print(f'lb_2 is : {lb_2}')
 
-rmse = root_mean_squared_error(sarima_val_prediction_price,val_data_close)
-print(f'rsme for sarima validation is : {rmse: .6f}')
+
+
+
+#no longer needed val 
+# sarima_val_prediction = []
+# sarima_current = sarima_result
+# for i in val_sarima:
+#     forecast = sarima_current.forecast(steps = 1)
+#     sarima_val_prediction.append(forecast.iloc[0])
+#     sarima_current = sarima_current.append([i],refit = False)
+# sarima_val_prediction = np.array(sarima_val_prediction)
+
+# sarima_val_actual_lag_1 = data['Close'].iloc[train_data-1:val_data-1]
+# sarima_val_prediction_price = sarima_val_actual_lag_1*np.exp(sarima_val_prediction)
+
+# val_data_close = data['Close'].iloc[train_data:val_data]
+# mae = mean_absolute_error(sarima_val_prediction_price,val_data_close)
+# print(f'mae for sarima validation is : {mae: .6f}')
+
+# rmse = root_mean_squared_error(sarima_val_prediction_price,val_data_close)
+# print(f'rsme for sarima validation is : {rmse: .6f}')
 
 
 sarima_test_prediction = []
 for i in test_sarima:
     forecast = sarima_current.forecast(steps= 1)
-    sarima_test_prediction.append(forecast.iloc[0])
+    sarima_test_prediction.append(forecast[0])
     sarima_current = sarima_current.append([i],refit= False)
 sarima_test_prediction = np.array(sarima_test_prediction)
 
 sarima_predicted_price = previous_1_price*np.exp(sarima_test_prediction)
 
+# stationar test 
+# adf_result = adfuller(data['log_return'])
 
-
-
+# print("\n========== ADF Stationarity Test ==========")
+# print(f'statistics are      : {adf_result[0]: .6f}')
+# print(f'p value is          : {adf_result[1]: .6f}')
+# print(f'critical values are :')
+# for key,value in adf_result[4].items():
+#     print(f'{key} : {value: .2f}')
 
 
 
@@ -363,3 +395,23 @@ plt.show()
 # plt.title("comparison")
 # plt.legend()
 # plt.show()
+
+
+plt.figure(figsize=(12,8))
+plt.plot(test_dates,actual_price,label = "Actual Price")
+plt.plot(test_dates,predicted_price,label = "LSTM predicted Price")
+plt.plot(test_dates,data_for_bl,label = "Naive Baseline Predicted Price")
+plt.plot(test_dates,xgb_predicted_price,label = "XGBoost Predicted Price")
+plt.plot(test_dates,sarima_predicted_price,label = "Sarima Predicted Price")
+plt.xlabel('Dates')
+plt.ylabel("Price")
+plt.title("Actual-Predicted Price")
+
+plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+plt.xticks(rotation=45)
+                
+plt.legend()
+plt.tight_layout()
+plt.savefig(f"images/actual-predicted-price/{ticker}_Actual-Predicted Price_For_{len(test_dates)}_Days.png", dpi = 600 , bbox_inches = "tight")
+plt.show()
