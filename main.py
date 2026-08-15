@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 from xgboost import XGBRegressor
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
 import yfinance as yf
 
 # download data
@@ -61,6 +63,8 @@ data['volatility_change'] = data['price_change'].rolling(20).std()
 data['price_change_lag_1'] = data['price_change'].shift(1)
 data['Volume_lag_1'] = data['Volume'].shift(1)
 data['volatility_lag_1'] = data['volatility_change'].shift(1)
+
+
 
 # loss and gain during training and validation
 diff = data['Close'].diff()
@@ -127,7 +131,7 @@ val_data_y = val_target_scaled
 model = keras.models.Sequential()
 
 # layers
-model.add(keras.layers.LSTM(64, return_sequences= True , input_shape = (x_train.shape[1],x_train.shape[2])))
+model.add(keras.layers.LSTM(64, return_sequences= True, input_shape = (x_train.shape[1],x_train.shape[2])))
 model.add(keras.layers.LSTM(64, return_sequences= False))
 model.add(keras.layers.Dense(128, activation= "relu"))
 model.add(keras.layers.Dropout(0.2))
@@ -156,13 +160,71 @@ future_return = TT_scaler.inverse_transform(future_return).flatten()
 actual_price = data['Close'].iloc[val_data:].values
 
 previous_1_price = data['Close'].iloc[val_data-1:val_data+len(test_features_scaled)-1].values
-print("previous_1_price:", previous_1_price.shape)
-print("future_return:", future_return.shape)
 predicted_price = previous_1_price * np.exp(future_return)
+
+
+
+
+
 
 #   ----------------- naive baseline --------------------- 
 data_for_bl = np.concatenate((data["Close"].iloc[val_data-1:val_data].values[-1:],data["Close"].iloc[val_data:-1].values))
 test_values = data["Close"].iloc[val_data:].values
+
+
+
+
+
+
+#    ------------------ sarima data -----------------------
+train_sarima = data['log_return'].iloc[:train_data]
+val_sarima = data['log_return'].iloc[train_data:val_data]
+test_sarima = data['log_return'].iloc[val_data:]
+
+sarima_model = SARIMAX(
+    train_sarima,
+    order= (0,0,1),
+    seasonal_order= (1,0,0,5),
+    enforce_invertibility=False,
+    enforce_stationarity=False
+)
+
+sarima_result = sarima_model.fit(disp=False)
+print(sarima_result.summary())
+
+sarima_val_prediction = []
+sarima_current = sarima_result
+for i in val_sarima:
+    forecast = sarima_current.forecast(steps = 1)
+    sarima_val_prediction.append(forecast.iloc[0])
+    sarima_current = sarima_current.append([i],refit = False)
+sarima_val_prediction = np.array(sarima_val_prediction)
+
+sarima_val_actual_lag_1 = data['Close'].iloc[train_data-1:val_data-1]
+sarima_val_prediction_price = sarima_val_actual_lag_1*np.exp(sarima_val_prediction)
+
+val_data_close = data['Close'].iloc[train_data:val_data]
+mae = mean_absolute_error(sarima_val_prediction_price,val_data_close)
+print(f'mae for sarima validation is : {mae: .6f}')
+
+rmse = root_mean_squared_error(sarima_val_prediction_price,val_data_close)
+print(f'rsme for sarima validation is : {rmse: .6f}')
+
+
+sarima_test_prediction = []
+for i in test_sarima:
+    forecast = sarima_current.forecast(steps= 1)
+    sarima_test_prediction.append(forecast.iloc[0])
+    sarima_current = sarima_current.append([i],refit= False)
+sarima_test_prediction = np.array(sarima_test_prediction)
+
+sarima_predicted_price = previous_1_price*np.exp(sarima_test_prediction)
+
+
+
+
+
+
 
 #    ------------------- xgboost --------------------------
 xgboost_features = data[
@@ -218,22 +280,29 @@ xgb_predicted_price = previous_1_price*np.exp(xgb_prediction)
 # for aesthetic
 print("\n========== Model Evaluation ==========")
 mae = mean_absolute_error(predicted_price,actual_price)
-print(f"mae for LSTM is : {mae:.2f}")
+print(f"mae for LSTM is : {mae:.6f}")
 
 rmse = root_mean_squared_error(predicted_price,actual_price)
-print(f"rmse for LSTM is : {rmse:.2f}")
+print(f"rmse for LSTM is : {rmse:.6f}")
 
 mae = mean_absolute_error(data_for_bl,test_values)
-print(f"mae for Naive Baseline is : {mae:.2f}")
+print(f"mae for Naive Baseline is : {mae:.6f}")
 
 rmse = root_mean_squared_error(data_for_bl,test_values)
-print(f"rmse for Naive Baseline is : {rmse:.2f}")
+print(f"rmse for Naive Baseline is : {rmse:.6f}")
 
 mae = mean_absolute_error(xgb_predicted_price,actual_price)
 print(f'mae for XGBoost is : {mae: .6f}')
 
 rmse = root_mean_squared_error(xgb_predicted_price,actual_price)
 print(f'rmse for XGBoost is : {rmse: .6f}')
+
+mae = mean_absolute_error(sarima_predicted_price,actual_price)
+print(f'mae for sarima is : {mae: .6f}')
+
+rmse = root_mean_squared_error(sarima_predicted_price,actual_price)
+print(f'rsme for sarima is : {rmse: .6f}')
+
 print("======================================")
 
 # # graph
