@@ -86,9 +86,13 @@ data =data.dropna()
 # ---------------------LSTM--------------------------
 features = data[['Open-Close-ratio-lag-1','High-Low-ratio','Volume-lag-1','volatility_lag_1','price_change_lag_1']]
 target = data[['log_return']]
+# len of train and val
 train_data = int(np.ceil(len(data)*0.70))
 val_data = int(np.ceil(len(data)*0.80))
 
+# close price for train and val
+t_data = data['Close'].iloc[:train_data].values
+v_data = data['Close'].iloc[train_data:val_data].values
 test_dates = data.index[val_data:]
 
 train_features = features.iloc[:train_data]
@@ -199,20 +203,16 @@ sarima_result = sarima_model.fit(disp=False)
 # print(sarima_result.summary())
 sarima_current = sarima_result
 
-
+residual = sarima_result.resid
 # residual check 
-# lb_1 = acorr_ljungbox(
-#     residual_1,
-#     lags = [5,10,15,20],
-#     return_df= True
-# )
-# lb_2 = acorr_ljungbox(
-#     resid_2,
-#     lags= [5,10,15,20],
-#     return_df= True
-# )
-# print(f'lb_1 is : {lb_1}')
-# print(f'lb_2 is : {lb_2}')
+residual_check = acorr_ljungbox(
+    residual,
+    lags=[5,10,15,20],
+    return_df= True
+)
+
+print(residual_check)
+residual_check.to_csv(f'results/{ticker}_{len(test_dates)}_residual_check.csv')
 
 
 
@@ -247,14 +247,14 @@ sarima_test_prediction = np.array(sarima_test_prediction)
 sarima_predicted_price = previous_1_price*np.exp(sarima_test_prediction)
 
 # stationar test 
-# adf_result = adfuller(data['log_return'])
+adf_result = adfuller(data['log_return'])
 
-# print("\n========== ADF Stationarity Test ==========")
-# print(f'statistics are      : {adf_result[0]: .6f}')
-# print(f'p value is          : {adf_result[1]: .6f}')
-# print(f'critical values are :')
-# for key,value in adf_result[4].items():
-#     print(f'{key} : {value: .2f}')
+print("\n========== ADF Stationarity Test ==========")
+print(f'statistics are      : {adf_result[0]: .6f}')
+print(f'p value is          : {adf_result[1]: .6f}')
+print(f'critical values are :')
+for key,value in adf_result[4].items():
+    print(f'{key} : {value: .2f}')
 
 
 
@@ -337,35 +337,35 @@ print(f'rsme for sarima is : {rmse: .6f}')
 
 print("======================================")
 
-# # graph
+# graph
 # plt.figure(figsize= (12,9))
 # plt.plot(data['Close'],label = "close" ,color = "red")
 # plt.plot(data['sma_20'],label = "sma" ,color = "purple")
 # plt.legend()
 # plt.show()
 
-# plt.figure(figsize =(12,6))
-# plt.plot(data.index, data['Open'], label = "Open", color = "orange")
-# plt.plot(data.index, data['Close'], label = "Close", color = "green")
-# plt.title("opening and closing price over time")
-# plt.legend()
-# plt.savefig("images/actual_data.png", dpi=600, bbox_inches="tight")
-# plt.show()
+plt.figure(figsize =(12,6))
+plt.plot(data.index, data['Open'], label = "Open", color = "orange")
+plt.plot(data.index, data['Close'], label = "Close", color = "green")
+plt.title("opening and closing price over time")
+plt.legend()
+plt.savefig("images/actual_data.png", dpi=600, bbox_inches="tight")
+plt.show()
 
-# plt.figure(figsize =(12,6))
-# plt.plot(data.index, data['Volume'], label = "Date-Volume", color = "red")
-# plt.title("volume over time")
-# plt.savefig("images/volume_over_time.png", dpi=600, bbox_inches="tight")
-# plt.show()
+plt.figure(figsize =(12,6))
+plt.plot(data.index, data['Volume'], label = "Date-Volume", color = "red")
+plt.title("volume over time")
+plt.savefig("images/volume_over_time.png", dpi=600, bbox_inches="tight")
+plt.show()
 
 # correlation between features
-# num_data = data.select_dtypes(include= 'number')
-# plt.figure(figsize=(10,8))
-# sns.heatmap(num_data.corr() ,annot= True,fmt = ".2f", cmap = "coolwarm")
-# plt.title("correlation between features")
-# plt.savefig("images/heatmap.png", dpi=600, bbox_inches="tight")
-# plt.show()
-# print(num_data.corr())
+num_data = data.select_dtypes(include= 'number')
+plt.figure(figsize=(10,8))
+sns.heatmap(num_data.corr() ,annot= True,fmt = ".2f", cmap = "coolwarm")
+plt.title("correlation between features")
+plt.savefig("images/heatmap.png", dpi=600, bbox_inches="tight")
+plt.show()
+print(num_data.corr())
 
 plt.plot(training.history["loss"], label="Training Loss")
 plt.plot(training.history["val_loss"], label="Validation Loss")
@@ -376,25 +376,25 @@ plt.legend()
 plt.savefig("images/loss_val-loss_data.png", dpi=600, bbox_inches="tight")
 plt.show()
 
-# plt.figure(figsize=(12,8))
-# plt.plot(train_features.index,train_features["Close"],label= "trained price", color= "red")
-# plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
-# plt.plot(val_features.index,val_features["Close"],label= "given val price", color = "purple")
-# plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
-# plt.title("price pridiction usind lstm")
-# plt.xlabel("date")
-# plt.ylabel("price")
-# plt.legend()
-# plt.savefig("images/pridicted_data.png", dpi=600, bbox_inches="tight")
-# # plt.show()
-
-# plt.figure(figsize=(12,8))
-# plt.plot(test_features.index,test_features["Close"],label= "desired actual price", color = "green")
-# plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
-# plt.plot(test_features.index,data_for_bl,label= "naive baseline", color = "red")
-# plt.title("comparison")
-# plt.legend()
+plt.figure(figsize=(12,8))
+plt.plot(train_features.index,t_data,label= "trained price", color= "red")
+plt.plot(test_features.index,actual_price,label= "desired actual price", color = "green")
+plt.plot(val_features.index,v_data,label= "given val price", color = "purple")
+plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
+plt.title("price pridiction usind lstm")
+plt.xlabel("date")
+plt.ylabel("price")
+plt.legend()
+plt.savefig("images/pridicted_data.png", dpi=600, bbox_inches="tight")
 # plt.show()
+
+plt.figure(figsize=(12,8))
+plt.plot(test_features.index,test_values,label= "desired actual price", color = "green")
+plt.plot(test_features.index,predicted_price,label= "predicted price", color = "blue")
+plt.plot(test_features.index,data_for_bl,label= "naive baseline", color = "red")
+plt.title("comparison")
+plt.legend()
+plt.show()
 
 
 plt.figure(figsize=(12,8))
